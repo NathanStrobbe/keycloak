@@ -38,7 +38,6 @@ import org.keycloak.services.resource.RealmResourceProvider;
 import org.keycloak.services.resources.account.AccountLoader;
 import org.keycloak.services.util.CacheControlUtil;
 import org.keycloak.services.util.ResolveRelative;
-import org.keycloak.utils.MediaTypeMatcher;
 import org.keycloak.utils.ProfileHelper;
 import org.keycloak.wellknown.WellKnownProvider;
 
@@ -48,6 +47,7 @@ import javax.ws.rs.OPTIONS;
 import javax.ws.rs.Path;
 import javax.ws.rs.PathParam;
 import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
@@ -262,6 +262,8 @@ public class RealmsResource {
 
     @Path("{realm}/authz")
     public Object getAuthorizationService(@PathParam("realm") String name) {
+        ProfileHelper.requireFeature(Profile.Feature.AUTHORIZATION);
+
         init(name);
         AuthorizationProvider authorization = this.session.getProvider(AuthorizationProvider.class);
         AuthorizationService service = new AuthorizationService(authorization);
@@ -279,9 +281,9 @@ public class RealmsResource {
      */
     @Path("{realm}/{extension}")
     public Object resolveRealmExtension(@PathParam("realm") String realmName, @PathParam("extension") String extension) {
+        init(realmName);
         RealmResourceProvider provider = session.getProvider(RealmResourceProvider.class, extension);
         if (provider != null) {
-            init(realmName);
             Object resource = provider.getResource();
             if (resource != null) {
                 return resource;

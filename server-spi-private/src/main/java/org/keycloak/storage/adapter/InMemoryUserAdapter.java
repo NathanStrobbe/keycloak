@@ -25,13 +25,11 @@ import org.keycloak.models.RealmModel;
 import org.keycloak.models.RoleModel;
 import org.keycloak.models.UserModel;
 import org.keycloak.models.UserModelDefaultMethods;
-import org.keycloak.models.utils.DefaultRoles;
 import org.keycloak.models.utils.KeycloakModelUtils;
 import org.keycloak.models.utils.RoleUtils;
 import org.keycloak.storage.ReadOnlyException;
 
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,7 +39,7 @@ import java.util.stream.Stream;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class InMemoryUserAdapter extends UserModelDefaultMethods {
+public class InMemoryUserAdapter extends UserModelDefaultMethods.Streams {
     private Long createdTimestamp = Time.currentTimeMillis();
     private boolean emailVerified;
     private boolean enabled;
@@ -77,7 +75,7 @@ public class InMemoryUserAdapter extends UserModelDefaultMethods {
     }
 
     public void addDefaults() {
-        DefaultRoles.addDefaultRoles(realm, this);
+        this.grantRole(realm.getDefaultRole());
 
         realm.getDefaultGroupsStream().forEach(this::joinGroup);
     }

@@ -20,9 +20,13 @@ package org.keycloak.protocol.oidc;
 import org.keycloak.authentication.authenticators.client.X509ClientAuthenticator;
 import org.keycloak.jose.jws.Algorithm;
 import org.keycloak.models.ClientModel;
+import org.keycloak.models.Constants;
 import org.keycloak.representations.idm.ClientRepresentation;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -79,6 +83,14 @@ public class OIDCAdvancedConfigWrapper {
         setAttribute(OIDCConfigAttributes.REQUEST_OBJECT_REQUIRED, requestObjectRequired);
     }
 
+    public List<String> getRequestUris() {
+        return getAttributeMultivalued(OIDCConfigAttributes.REQUEST_URIS);
+    }
+
+    public void setRequestUris(List<String> requestUris) {
+        setAttributeMultivalued(OIDCConfigAttributes.REQUEST_URIS, requestUris);
+    }
+
     public boolean isUseJwksUrl() {
         String useJwksUrl = getAttribute(OIDCConfigAttributes.USE_JWKS_URL);
         return Boolean.parseBoolean(useJwksUrl);
@@ -117,6 +129,16 @@ public class OIDCAdvancedConfigWrapper {
     public void setUseMtlsHoKToken(boolean useUtlsHokToken) {
         String val = String.valueOf(useUtlsHokToken);
         setAttribute(OIDCConfigAttributes.USE_MTLS_HOK_TOKEN, val);
+    }
+
+    public boolean isUseRefreshToken() {
+        String useRefreshToken = getAttribute(OIDCConfigAttributes.USE_REFRESH_TOKEN, "true");
+        return Boolean.parseBoolean(useRefreshToken);
+    }
+
+    public void setUseRefreshToken(boolean useRefreshToken) {
+        String val = String.valueOf(useRefreshToken);
+        setAttribute(OIDCConfigAttributes.USE_REFRESH_TOKEN, val);
     }
 
     /**
@@ -170,6 +192,29 @@ public class OIDCAdvancedConfigWrapper {
 
     public void setIdTokenEncryptedResponseEnc(String encName) {
         setAttribute(OIDCConfigAttributes.ID_TOKEN_ENCRYPTED_RESPONSE_ENC, encName);
+    }
+
+    public String getAuthorizationSignedResponseAlg() {
+        return getAttribute(OIDCConfigAttributes.AUTHORIZATION_SIGNED_RESPONSE_ALG);
+    }
+    public void setAuthorizationSignedResponseAlg(String algName) {
+        setAttribute(OIDCConfigAttributes.AUTHORIZATION_SIGNED_RESPONSE_ALG, algName);
+    }
+
+    public String getAuthorizationEncryptedResponseAlg() {
+        return getAttribute(OIDCConfigAttributes.AUTHORIZATION_ENCRYPTED_RESPONSE_ALG);
+    }
+
+    public void setAuthorizationEncryptedResponseAlg(String algName) {
+        setAttribute(OIDCConfigAttributes.AUTHORIZATION_ENCRYPTED_RESPONSE_ALG, algName);
+    }
+
+    public String getAuthorizationEncryptedResponseEnc() {
+        return getAttribute(OIDCConfigAttributes.AUTHORIZATION_ENCRYPTED_RESPONSE_ENC);
+    }
+
+    public void setAuthorizationEncryptedResponseEnc(String encName) {
+        setAttribute(OIDCConfigAttributes.AUTHORIZATION_ENCRYPTED_RESPONSE_ENC, encName);
     }
 
     public String getTokenEndpointAuthSigningAlg() {
@@ -242,6 +287,22 @@ public class OIDCAdvancedConfigWrapper {
                     clientRep.getAttributes().put(attrKey, null);
                 }
             }
+        }
+    }
+
+    private List<String> getAttributeMultivalued(String attrKey) {
+        String attrValue = getAttribute(attrKey);
+        if (attrValue == null) return Collections.emptyList();
+        return Arrays.asList(Constants.CFG_DELIMITER_PATTERN.split(attrValue));
+    }
+
+    private void setAttributeMultivalued(String attrKey, List<String> attrValues) {
+        if (attrValues == null || attrValues.size() == 0) {
+            // Remove attribute
+            setAttribute(attrKey, null);
+        } else {
+            String attrValueFull = String.join(Constants.CFG_DELIMITER, attrValues);
+            setAttribute(attrKey, attrValueFull);
         }
     }
 }

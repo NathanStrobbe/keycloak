@@ -18,6 +18,7 @@
 package org.keycloak.models.jpa;
 
 import org.keycloak.common.util.MultivaluedHashMap;
+import org.keycloak.common.util.ObjectUtil;
 import org.keycloak.models.ClientModel;
 import org.keycloak.models.GroupModel;
 import org.keycloak.models.KeycloakSession;
@@ -53,7 +54,7 @@ import static org.keycloak.utils.StreamsUtil.closing;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class UserAdapter implements UserModel, JpaModel<UserEntity> {
+public class UserAdapter implements UserModel.Streams, JpaModel<UserEntity> {
 
     protected UserEntity user;
     protected EntityManager em;
@@ -264,12 +265,6 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
     }
 
     @Override
-    public void addRequiredAction(RequiredAction action) {
-        String actionName = action.name();
-        addRequiredAction(actionName);
-    }
-
-    @Override
     public void addRequiredAction(String actionName) {
         for (UserRequiredActionEntity attr : user.getRequiredActions()) {
             if (attr.getAction().equals(actionName)) {
@@ -281,12 +276,6 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
         attr.setUser(user);
         em.persist(attr);
         user.getRequiredActions().add(attr);
-    }
-
-    @Override
-    public void removeRequiredAction(RequiredAction action) {
-        String actionName = action.name();
-        removeRequiredAction(actionName);
     }
 
     @Override
@@ -328,6 +317,9 @@ public class UserAdapter implements UserModel, JpaModel<UserEntity> {
 
     @Override
     public void setEmail(String email) {
+        if (ObjectUtil.isBlank(email)) {
+            email = null;
+        }
         email = KeycloakModelUtils.toLowerCaseSafe(email);
         user.setEmail(email, realm.isDuplicateEmailsAllowed());
     }

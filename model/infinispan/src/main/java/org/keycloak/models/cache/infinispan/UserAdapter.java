@@ -42,7 +42,7 @@ import java.util.stream.Stream;
  * @author <a href="mailto:bill@burkecentral.com">Bill Burke</a>
  * @version $Revision: 1 $
  */
-public class UserAdapter implements CachedUserModel {
+public class UserAdapter implements CachedUserModel.Streams {
 
     private final Supplier<UserModel> modelSupplier;
     protected final CachedUser cached;
@@ -61,6 +61,7 @@ public class UserAdapter implements CachedUserModel {
 
     @Override
     public String getFirstName() {
+        if (updated != null) return updated.getFirstName();
         return getFirstAttribute(FIRST_NAME);
     }
 
@@ -71,6 +72,7 @@ public class UserAdapter implements CachedUserModel {
 
     @Override
     public String getLastName() {
+        if (updated != null) return updated.getLastName();
         return getFirstAttribute(LAST_NAME);
     }
 
@@ -81,6 +83,7 @@ public class UserAdapter implements CachedUserModel {
 
     @Override
     public String getEmail() {
+        if (updated != null) return updated.getEmail();
         return getFirstAttribute(EMAIL);
     }
 
@@ -132,6 +135,7 @@ public class UserAdapter implements CachedUserModel {
 
     @Override
     public String getUsername() {
+        if (updated != null) return updated.getUsername();
         return getFirstAttribute(UserModel.USERNAME);
     }
 
@@ -380,6 +384,6 @@ public class UserAdapter implements CachedUserModel {
     }
 
     private UserModel getUserModel() {
-        return userProviderCache.getDelegate().getUserById(cached.getId(), realm);
+        return userProviderCache.getDelegate().getUserById(realm, cached.getId());
     }
 }

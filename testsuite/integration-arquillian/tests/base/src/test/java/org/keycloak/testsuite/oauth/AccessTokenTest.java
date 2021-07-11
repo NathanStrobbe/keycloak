@@ -16,8 +16,11 @@
  */
 package org.keycloak.testsuite.oauth;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.TreeNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.TextNode;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpPost;
@@ -110,6 +113,7 @@ import static org.keycloak.testsuite.util.OAuthClient.AUTH_SERVER_ROOT;
 import static org.keycloak.testsuite.util.ProtocolMapperUtil.createRoleNameMapper;
 import static org.keycloak.testsuite.Assert.assertExpiration;
 
+import org.keycloak.util.JsonSerialization;
 import org.openqa.selenium.By;
 
 /**
@@ -220,6 +224,13 @@ public class AccessTokenTest extends AbstractKeycloakTest {
         assertNotEquals("test-user@localhost", token.getSubject());
 
         assertEquals(sessionId, token.getSessionState());
+
+        JWSInput idToken = new JWSInput(response.getIdToken());
+        ObjectMapper mapper = JsonSerialization.mapper;
+        JsonParser parser = mapper.getFactory().createParser(idToken.readContentAsString());
+        TreeNode treeNode = mapper.readTree(parser);
+        String sid = ((TextNode) treeNode.get("sid")).asText();
+        assertEquals(sessionId, sid);
 
         assertNull(token.getNbf());
         assertEquals(0, token.getNotBefore());
@@ -578,13 +589,16 @@ public class AccessTokenTest extends AbstractKeycloakTest {
 
 
             Response response = executeGrantAccessTokenRequest(grantTarget);
-            assertEquals(400, response.getStatus());
+            // 401 because the client is now a bearer without a secret
+            assertEquals(401, response.getStatus());
             response.close();
 
             {
                 ClientResource clientResource = findClientByClientId(adminClient.realm("test"), "test-app");
                 ClientRepresentation clientRepresentation = clientResource.toRepresentation();
                 clientRepresentation.setBearerOnly(false);
+                // reset to the old secret
+                clientRepresentation.setSecret("password");
                 clientResource.update(clientRepresentation);
             }
 
@@ -1209,6 +1223,27 @@ public class AccessTokenTest extends AbstractKeycloakTest {
     }
 
     @Test
+    public void accessTokenRequestNoRefreshToken() {
+        ClientResource client = ApiUtil.findClientByClientId(adminClient.realm("test"), "test-app");
+        ClientRepresentation clientRepresentation = client.toRepresentation();
+        clientRepresentation.getAttributes().put(OIDCConfigAttributes.USE_REFRESH_TOKEN, "false");
+        client.update(clientRepresentation);
+
+        oauth.doLogin("test-user@localhost", "password");
+
+        String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+        OAuthClient.AccessTokenResponse response = oauth.doAccessTokenRequest(code, "password");
+
+        assertEquals(200, response.getStatusCode());
+
+        assertNotNull(response.getAccessToken());
+        assertNull(response.getRefreshToken());
+
+        clientRepresentation.getAttributes().put(OIDCConfigAttributes.USE_REFRESH_TOKEN, "true");
+        client.update(clientRepresentation);
+    }
+
+    @Test
     public void accessTokenRequest_ClientPS384_RealmRS256() throws Exception {
         conductAccessTokenRequest(Algorithm.HS256, Algorithm.PS384, Algorithm.RS256);
     }
@@ -1336,6 +1371,36 @@ public class AccessTokenTest extends AbstractKeycloakTest {
         assertEquals(token.getId(), event.getDetails().get(Details.TOKEN_ID));
         assertEquals(oauth.parseRefreshToken(response.getRefreshToken()).getId(), event.getDetails().get(Details.REFRESH_TOKEN_ID));
         assertEquals(sessionId, token.getSessionState());
+    }
+
+    // KEYCLOAK-16009
+    @Test
+    public void tokenRequestParamsMoreThanOnce() throws Exception {
+        oauth.doLogin("test-user@localhost", "password");
+
+        String code = oauth.getCurrentQuery().get(OAuth2Constants.CODE);
+
+        try (CloseableHttpClient client = HttpClientBuilder.create().build()) {
+            HttpPost post = new HttpPost(oauth.getAccessTokenUrl());
+
+            List<NameValuePair> parameters = new LinkedList<>();
+            parameters.add(new BasicNameValuePair(OAuth2Constants.GRANT_TYPE, OAuth2Constants.AUTHORIZATION_CODE));
+            parameters.add(new BasicNameValuePair(OAuth2Constants.CODE, code));
+            parameters.add(new BasicNameValuePair(OAuth2Constants.REDIRECT_URI, oauth.getRedirectUri()));
+            parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, oauth.getClientId()));
+            parameters.add(new BasicNameValuePair(OAuth2Constants.CLIENT_ID, "foo"));
+
+            String authorization = BasicAuthHelper.createHeader(OAuth2Constants.CLIENT_ID, "password");
+            post.setHeader("Authorization", authorization);
+
+            UrlEncodedFormEntity formEntity = new UrlEncodedFormEntity(parameters, "UTF-8");
+            post.setEntity(formEntity);
+
+            OAuthClient.AccessTokenResponse response = new OAuthClient.AccessTokenResponse(client.execute(post));
+            assertEquals(400, response.getStatusCode());
+            assertEquals("invalid_request", response.getError());
+            assertEquals("duplicated parameter", response.getErrorDescription());
+        }
     }
 
 }

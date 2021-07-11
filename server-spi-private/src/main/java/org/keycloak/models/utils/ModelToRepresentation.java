@@ -24,6 +24,7 @@ import org.keycloak.authorization.model.Resource;
 import org.keycloak.authorization.model.ResourceServer;
 import org.keycloak.authorization.model.Scope;
 import org.keycloak.authorization.policy.provider.PolicyProviderFactory;
+import org.keycloak.common.Profile;
 import org.keycloak.common.util.MultivaluedHashMap;
 import org.keycloak.common.util.Time;
 import org.keycloak.component.ComponentModel;
@@ -44,6 +45,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -93,6 +95,9 @@ public class ModelToRepresentation {
         REALM_EXCLUDED_ATTRIBUTES.add("webAuthnPolicyCreateTimeoutPasswordless");
         REALM_EXCLUDED_ATTRIBUTES.add("webAuthnPolicyAvoidSameAuthenticatorRegisterPasswordless");
         REALM_EXCLUDED_ATTRIBUTES.add("webAuthnPolicyAcceptableAaguidsPasswordless");
+
+        REALM_EXCLUDED_ATTRIBUTES.add(Constants.CLIENT_POLICIES);
+        REALM_EXCLUDED_ATTRIBUTES.add(Constants.CLIENT_PROFILES);
     }
 
 
@@ -188,15 +193,11 @@ public class ModelToRepresentation {
         rep.setEnabled(user.isEnabled());
         rep.setEmailVerified(user.isEmailVerified());
         rep.setTotp(session.userCredentialManager().isConfiguredFor(realm, user, OTPCredentialModel.TYPE));
-        rep.setDisableableCredentialTypes(session.userCredentialManager().getDisableableCredentialTypes(realm, user));
+        rep.setDisableableCredentialTypes(session.userCredentialManager()
+                .getDisableableCredentialTypesStream(realm, user).collect(Collectors.toSet()));
         rep.setFederationLink(user.getFederationLink());
-
         rep.setNotBefore(session.users().getNotBeforeOfUser(realm, user));
-
-        Set<String> requiredActions = user.getRequiredActions();
-        List<String> reqActions = new ArrayList<>(requiredActions);
-
-        rep.setRequiredActions(reqActions);
+        rep.setRequiredActions(user.getRequiredActionsStream().collect(Collectors.toList()));
 
         Map<String, List<String>> attributes = user.getAttributes();
         Map<String, List<String>> copy = null;
@@ -295,7 +296,7 @@ public class ModelToRepresentation {
         return rep;
     }
 
-    public static RealmRepresentation toRepresentation(RealmModel realm, boolean internal) {
+    public static RealmRepresentation toRepresentation(KeycloakSession session, RealmModel realm, boolean internal) {
         RealmRepresentation rep = new RealmRepresentation();
         rep.setId(realm.getId());
         rep.setRealm(realm.getName());
@@ -315,7 +316,11 @@ public class ModelToRepresentation {
         rep.setQuickLoginCheckMilliSeconds(realm.getQuickLoginCheckMilliSeconds());
         rep.setMaxDeltaTimeSeconds(realm.getMaxDeltaTimeSeconds());
         rep.setFailureFactor(realm.getFailureFactor());
-        rep.setUserManagedAccessAllowed(realm.isUserManagedAccessAllowed());
+        if (Profile.isFeatureEnabled(Profile.Feature.AUTHORIZATION)) {
+            rep.setUserManagedAccessAllowed(realm.isUserManagedAccessAllowed());
+        } else {
+            rep.setUserManagedAccessAllowed(false);
+        }
 
         rep.setEventsEnabled(realm.isEventsEnabled());
         if (realm.getEventsExpiration() != 0) {
@@ -356,6 +361,8 @@ public class ModelToRepresentation {
         rep.setAccessCodeLifespanLogin(realm.getAccessCodeLifespanLogin());
         rep.setActionTokenGeneratedByAdminLifespan(realm.getActionTokenGeneratedByAdminLifespan());
         rep.setActionTokenGeneratedByUserLifespan(realm.getActionTokenGeneratedByUserLifespan());
+        rep.setOAuth2DeviceCodeLifespan(realm.getOAuth2DeviceConfig().getLifespan());
+        rep.setOAuth2DevicePollingInterval(realm.getOAuth2DeviceConfig().getPoolingInterval());
         rep.setSmtpServer(new HashMap<>(realm.getSmtpConfig()));
         rep.setBrowserSecurityHeaders(realm.getBrowserSecurityHeaders());
         rep.setAccountTheme(realm.getAccountTheme());
@@ -398,6 +405,18 @@ public class ModelToRepresentation {
         rep.setWebAuthnPolicyPasswordlessAvoidSameAuthenticatorRegister(webAuthnPolicy.isAvoidSameAuthenticatorRegister());
         rep.setWebAuthnPolicyPasswordlessAcceptableAaguids(webAuthnPolicy.getAcceptableAaguids());
 
+        CibaConfig cibaPolicy = realm.getCibaPolicy();
+        Map<String, String> attrMap = Optional.ofNullable(rep.getAttributes()).orElse(new HashMap<>());
+        attrMap.put(CibaConfig.CIBA_BACKCHANNEL_TOKEN_DELIVERY_MODE, cibaPolicy.getBackchannelTokenDeliveryMode());
+        attrMap.put(CibaConfig.CIBA_EXPIRES_IN, String.valueOf(cibaPolicy.getExpiresIn()));
+        attrMap.put(CibaConfig.CIBA_INTERVAL, String.valueOf(cibaPolicy.getPoolingInterval()));
+        attrMap.put(CibaConfig.CIBA_AUTH_REQUESTED_USER_HINT, cibaPolicy.getAuthRequestedUserHint());
+
+        ParConfig parPolicy = realm.getParPolicy();
+        attrMap.put(ParConfig.PAR_REQUEST_URI_LIFESPAN, String.valueOf(parPolicy.getRequestUriLifespan()));
+
+        rep.setAttributes(attrMap);
+
         if (realm.getBrowserFlow() != null) rep.setBrowserFlow(realm.getBrowserFlow().getAlias());
         if (realm.getRegistrationFlow() != null) rep.setRegistrationFlow(realm.getRegistrationFlow().getAlias());
         if (realm.getDirectGrantFlow() != null) rep.setDirectGrantFlow(realm.getDirectGrantFlow().getAlias());
@@ -405,10 +424,8 @@ public class ModelToRepresentation {
         if (realm.getClientAuthenticationFlow() != null) rep.setClientAuthenticationFlow(realm.getClientAuthenticationFlow().getAlias());
         if (realm.getDockerAuthenticationFlow() != null) rep.setDockerAuthenticationFlow(realm.getDockerAuthenticationFlow().getAlias());
 
-        List<String> defaultRoles = realm.getDefaultRolesStream().collect(Collectors.toList());
-        if (!defaultRoles.isEmpty()) {
-            rep.setDefaultRoles(defaultRoles);
-        }
+        rep.setDefaultRole(toBriefRepresentation(realm.getDefaultRole()));
+
         List<String> defaultGroups = realm.getDefaultGroupsStream()
                 .map(ModelToRepresentation::buildGroupPath).collect(Collectors.toList());
         if (!defaultGroups.isEmpty()) {
@@ -438,6 +455,8 @@ public class ModelToRepresentation {
             exportRequiredActions(realm, rep);
             exportGroups(realm, rep);
         }
+
+        session.clientPolicy().updateRealmRepresentationFromModel(realm, rep);
 
         rep.setAttributes(stripRealmAttributesIncludedAsFields(realm.getAttributes()));
 
@@ -596,8 +615,8 @@ public class ModelToRepresentation {
         rep.setNodeReRegistrationTimeout(clientModel.getNodeReRegistrationTimeout());
         rep.setClientAuthenticatorType(clientModel.getClientAuthenticatorType());
 
-        rep.setDefaultClientScopes(new LinkedList<>(clientModel.getClientScopes(true, false).keySet()));
-        rep.setOptionalClientScopes(new LinkedList<>(clientModel.getClientScopes(false, false).keySet()));
+        rep.setDefaultClientScopes(new LinkedList<>(clientModel.getClientScopes(true).keySet()));
+        rep.setOptionalClientScopes(new LinkedList<>(clientModel.getClientScopes(false).keySet()));
 
         Set<String> redirectUris = clientModel.getRedirectUris();
         if (redirectUris != null) {
@@ -609,11 +628,6 @@ public class ModelToRepresentation {
             rep.setWebOrigins(new LinkedList<>(webOrigins));
         }
 
-        String[] defaultRoles = clientModel.getDefaultRolesStream().toArray(String[]::new);
-        if (defaultRoles.length > 0) {
-            rep.setDefaultRoles(defaultRoles);
-        }
-
         if (!clientModel.getRegisteredNodes().isEmpty()) {
             rep.setRegisteredNodes(new HashMap<>(clientModel.getRegisteredNodes()));
         }
@@ -623,11 +637,13 @@ public class ModelToRepresentation {
         if (!mappings.isEmpty())
             rep.setProtocolMappers(mappings);
 
-        AuthorizationProvider authorization = session.getProvider(AuthorizationProvider.class);
-        ResourceServer resourceServer = authorization.getStoreFactory().getResourceServerStore().findById(clientModel.getId());
+        if (Profile.isFeatureEnabled(Profile.Feature.AUTHORIZATION)) {
+            AuthorizationProvider authorization = session.getProvider(AuthorizationProvider.class);
+            ResourceServer resourceServer = authorization.getStoreFactory().getResourceServerStore().findById(clientModel.getId());
 
-        if (resourceServer != null) {
-            rep.setAuthorizationServicesEnabled(true);
+            if (resourceServer != null) {
+                rep.setAuthorizationServicesEnabled(true);
+            }
         }
 
         return rep;
@@ -732,7 +748,7 @@ public class ModelToRepresentation {
             rep.setAuthenticatorConfig(config.getAlias());
         }
         rep.setAuthenticator(model.getAuthenticator());
-        rep.setAutheticatorFlow(model.isAuthenticatorFlow());
+        rep.setAuthenticatorFlow(model.isAuthenticatorFlow());
         if (model.getFlowId() != null) {
             AuthenticationFlowModel flow = realm.getAuthenticationFlowById(model.getFlowId());
             rep.setFlowAlias(flow.getAlias());
@@ -896,7 +912,7 @@ public class ModelToRepresentation {
             ClientModel clientModel = realm.getClientById(resourceServer);
             owner.setName(clientModel.getClientId());
         } else {
-            UserModel userModel = keycloakSession.users().getUserById(owner.getId(), realm);
+            UserModel userModel = keycloakSession.users().getUserById(realm, owner.getId());
 
             if (userModel == null) {
                 throw new RuntimeException("Could not find the user [" + owner.getId() + "] who owns the Resource [" + resource.getId() + "].");
@@ -945,8 +961,8 @@ public class ModelToRepresentation {
             representation.setResourceName(resource.getName());
             KeycloakSession keycloakSession = authorization.getKeycloakSession();
             RealmModel realm = authorization.getRealm();
-            UserModel userOwner = keycloakSession.users().getUserById(ticket.getOwner(), realm);
-            UserModel requester = keycloakSession.users().getUserById(ticket.getRequester(), realm);
+            UserModel userOwner = keycloakSession.users().getUserById(realm, ticket.getOwner());
+            UserModel requester = keycloakSession.users().getUserById(realm, ticket.getRequester());
             representation.setRequesterName(requester.getUsername());
             if (userOwner != null) {
                 representation.setOwnerName(userOwner.getUsername());

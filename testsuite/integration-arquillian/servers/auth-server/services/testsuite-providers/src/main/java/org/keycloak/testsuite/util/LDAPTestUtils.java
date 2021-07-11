@@ -30,6 +30,7 @@ import org.keycloak.storage.ldap.LDAPStorageProvider;
 import org.keycloak.storage.ldap.LDAPConfig;
 import org.keycloak.storage.ldap.LDAPStorageProviderFactory;
 import org.keycloak.storage.ldap.LDAPUtils;
+import org.keycloak.storage.ldap.idm.model.LDAPDn;
 import org.keycloak.storage.ldap.idm.model.LDAPObject;
 import org.keycloak.storage.ldap.idm.query.internal.LDAPQuery;
 import org.keycloak.storage.ldap.idm.store.ldap.LDAPIdentityStore;
@@ -50,6 +51,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -66,6 +68,18 @@ public class LDAPTestUtils {
 
         session.userCredentialManager().updateCredential(realm, user, creds);
         return user;
+    }
+
+    public static void addLdapUser(KeycloakSession session, RealmModel appRealm, LDAPStorageProvider ldapFedProvider, String username, String password, Consumer<UserModel> userCustomizer) {
+
+        UserModel user = ldapFedProvider.addUser(appRealm, username);
+
+        userCustomizer.accept(user);
+
+        if (password == null) {
+            return;
+        }
+        session.userCredentialManager().updateCredential(appRealm, user, (UserCredentialModel) UserCredentialModel.password(username));
     }
 
     public static LDAPObject addLDAPUser(LDAPStorageProvider ldapProvider, RealmModel realm, final String username,
@@ -126,6 +140,18 @@ public class LDAPTestUtils {
             }
         };
         return LDAPUtils.addUserToLDAP(ldapProvider, realm, helperUser);
+    }
+
+    public static LDAPObject addLdapOU(LDAPStorageProvider ldapProvider, String name) {
+        LDAPObject ldapObject = new LDAPObject();
+        ldapObject.setRdnAttributeName("ou");
+        ldapObject.setObjectClasses(Collections.singletonList("organizationalUnit"));
+        ldapObject.setSingleAttribute("ou", name);
+        LDAPDn dn = LDAPDn.fromString(ldapProvider.getLdapIdentityStore().getConfig().getUsersDn());
+        dn.addFirst("ou", name);
+        ldapObject.setDn(dn);
+        ldapProvider.getLdapIdentityStore().add(ldapObject);
+        return ldapObject;
     }
 
     public static void updateLDAPPassword(LDAPStorageProvider ldapProvider, LDAPObject ldapUser, String password) {

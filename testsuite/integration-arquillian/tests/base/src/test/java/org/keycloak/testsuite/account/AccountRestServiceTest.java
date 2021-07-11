@@ -78,7 +78,6 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
-import static org.keycloak.common.Profile.Feature.ACCOUNT_API;
 
 /**
  * @author <a href="mailto:sthorger@redhat.com">Stian Thorgersen</a>
@@ -121,8 +120,8 @@ public class AccountRestServiceTest extends AbstractRestServiceTest {
             user = updateAndGet(user);
 
             assertEquals(user.getLastName(), "Bob");
-            assertEquals(user.getFirstName(), originalFirstName);
-            assertEquals(user.getEmail(), originalEmail);
+            assertNull(user.getFirstName());
+            assertNull(user.getEmail());
 
         } finally {
             RealmRepresentation realmRep = adminClient.realm("test").toRepresentation();

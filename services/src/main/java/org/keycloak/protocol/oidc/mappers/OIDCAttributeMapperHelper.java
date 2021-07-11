@@ -23,6 +23,7 @@ import org.keycloak.protocol.ProtocolMapper;
 import org.keycloak.protocol.ProtocolMapperUtils;
 import org.keycloak.protocol.oidc.OIDCLoginProtocol;
 import org.keycloak.provider.ProviderConfigProperty;
+import org.keycloak.representations.AccessTokenResponse;
 import org.keycloak.representations.IDToken;
 import org.keycloak.services.ServicesLogger;
 import org.keycloak.util.JsonSerialization;
@@ -50,6 +51,9 @@ public class OIDCAttributeMapperHelper {
     public static final String INCLUDE_IN_ID_TOKEN = "id.token.claim";
     public static final String INCLUDE_IN_ID_TOKEN_LABEL = "includeInIdToken.label";
     public static final String INCLUDE_IN_ID_TOKEN_HELP_TEXT = "includeInIdToken.tooltip";
+    public static final String INCLUDE_IN_ACCESS_TOKEN_RESPONSE = "access.tokenResponse.claim";
+    public static final String INCLUDE_IN_ACCESS_TOKEN_RESPONSE_LABEL = "includeInAccessTokenResponse.label";
+    public static final String INCLUDE_IN_ACCESS_TOKEN_RESPONSE_HELP_TEXT = "includeInAccessTokenResponse.tooltip";
 
     public static final String INCLUDE_IN_USERINFO = "userinfo.token.claim";
     public static final String INCLUDE_IN_USERINFO_LABEL = "includeInUserInfo.label";
@@ -188,6 +192,14 @@ public class OIDCAttributeMapperHelper {
     }
 
     public static void mapClaim(IDToken token, ProtocolMapperModel mappingModel, Object attributeValue) {
+        mapClaim(mappingModel, attributeValue, token.getOtherClaims());
+    }
+
+    public static void mapClaim(AccessTokenResponse token, ProtocolMapperModel mappingModel, Object attributeValue) {
+        mapClaim(mappingModel, attributeValue, token.getOtherClaims());
+    }
+
+    private static void mapClaim(ProtocolMapperModel mappingModel, Object attributeValue, Map<String, Object> jsonObject) {
         attributeValue = mapAttributeValue(mappingModel, attributeValue);
         if (attributeValue == null) return;
 
@@ -198,16 +210,16 @@ public class OIDCAttributeMapperHelper {
         List<String> split = splitClaimPath(protocolClaim);
         final int length = split.size();
         int i = 0;
-        Map<String, Object> jsonObject = token.getOtherClaims();
         for (String component : split) {
             i++;
             if (i == length) {
                 jsonObject.put(component, attributeValue);
             } else {
-                Map<String, Object> nested = (Map<String, Object>)jsonObject.get(component);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> nested = (Map<String, Object>) jsonObject.get(component);
 
                 if (nested == null) {
-                    nested = new HashMap<String, Object>();
+                    nested = new HashMap<>();
                     jsonObject.put(component, nested);
                 }
 
@@ -221,11 +233,29 @@ public class OIDCAttributeMapperHelper {
                                                         String tokenClaimName, String claimType,
                                                         boolean accessToken, boolean idToken,
                                                         String mapperId) {
-        return createClaimMapper(name, userAttribute,tokenClaimName, claimType, accessToken, idToken, true, mapperId);
+        return createClaimMapper(name, userAttribute, null, tokenClaimName, claimType, accessToken, idToken, true, mapperId);
+    }
+
+    public static ProtocolMapperModel createClaimMapper(String name,
+            String userAttribute,
+            String userProfileAttribute,
+            String tokenClaimName, String claimType,
+            boolean accessToken, boolean idToken,
+            String mapperId) {
+        return createClaimMapper(name, userAttribute, userProfileAttribute, tokenClaimName, claimType, accessToken, idToken, true, mapperId);
+    }
+
+    public static ProtocolMapperModel createClaimMapper(String name,
+            String userAttribute,
+            String tokenClaimName, String claimType,
+            boolean accessToken, boolean idToken, boolean userinfo,
+            String mapperId) {
+        return createClaimMapper(name, userAttribute, null, tokenClaimName, claimType, accessToken, idToken, userinfo, mapperId);
     }
 
     public static ProtocolMapperModel createClaimMapper(String name,
                                   String userAttribute,
+                                  String userProfileAttribute,
                                   String tokenClaimName, String claimType,
                                   boolean accessToken, boolean idToken, boolean userinfo,
                                   String mapperId) {
@@ -235,6 +265,10 @@ public class OIDCAttributeMapperHelper {
         mapper.setProtocol(OIDCLoginProtocol.LOGIN_PROTOCOL);
         Map<String, String> config = new HashMap<String, String>();
         config.put(ProtocolMapperUtils.USER_ATTRIBUTE, userAttribute);
+        if (userProfileAttribute != null) {
+            config.put(ProtocolMapperUtils.USER_PROFILE_ATTRIBUTE, userProfileAttribute);
+        }
+
         config.put(TOKEN_CLAIM_NAME, tokenClaimName);
         config.put(JSON_TYPE, claimType);
         if (accessToken) config.put(INCLUDE_IN_ACCESS_TOKEN, "true");
@@ -250,6 +284,10 @@ public class OIDCAttributeMapperHelper {
 
     public static boolean includeInAccessToken(ProtocolMapperModel mappingModel) {
         return "true".equals(mappingModel.getConfig().get(INCLUDE_IN_ACCESS_TOKEN));
+    }
+
+    public static boolean includeInAccessTokenResponse(ProtocolMapperModel mappingModel) {
+        return "true".equals(mappingModel.getConfig().get(INCLUDE_IN_ACCESS_TOKEN_RESPONSE));
     }
 
     public static boolean isMultivalued(ProtocolMapperModel mappingModel) {
@@ -327,6 +365,16 @@ public class OIDCAttributeMapperHelper {
             property.setType(ProviderConfigProperty.BOOLEAN_TYPE);
             property.setDefaultValue("true");
             property.setHelpText(INCLUDE_IN_USERINFO_HELP_TEXT);
+            configProperties.add(property);
+        }
+
+        if (OIDCAccessTokenResponseMapper.class.isAssignableFrom(protocolMapperClass)) {
+            ProviderConfigProperty property = new ProviderConfigProperty();
+            property.setName(INCLUDE_IN_ACCESS_TOKEN_RESPONSE);
+            property.setLabel(INCLUDE_IN_ACCESS_TOKEN_RESPONSE_LABEL);
+            property.setType(ProviderConfigProperty.BOOLEAN_TYPE);
+            property.setDefaultValue("false");
+            property.setHelpText(INCLUDE_IN_ACCESS_TOKEN_RESPONSE_HELP_TEXT);
             configProperties.add(property);
         }
     }

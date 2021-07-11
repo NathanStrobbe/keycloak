@@ -22,6 +22,7 @@ import org.jboss.resteasy.spi.BadRequestException;
 import org.jboss.resteasy.spi.ResteasyProviderFactory;
 import org.keycloak.authorization.admin.AuthorizationService;
 import org.keycloak.common.ClientConnection;
+import org.keycloak.common.Profile;
 import org.keycloak.common.util.Time;
 import org.keycloak.events.Errors;
 import org.keycloak.events.admin.OperationType;
@@ -50,10 +51,11 @@ import org.keycloak.representations.idm.UserRepresentation;
 import org.keycloak.representations.idm.UserSessionRepresentation;
 import org.keycloak.services.ErrorResponse;
 import org.keycloak.services.ErrorResponseException;
-import org.keycloak.services.clientpolicy.AdminClientRegisterContext;
-import org.keycloak.services.clientpolicy.AdminClientUpdateContext;
 import org.keycloak.services.clientpolicy.ClientPolicyException;
-import org.keycloak.services.clientpolicy.DefaultClientPolicyManager;
+import org.keycloak.services.clientpolicy.context.AdminClientUnregisterContext;
+import org.keycloak.services.clientpolicy.context.AdminClientUpdateContext;
+import org.keycloak.services.clientpolicy.context.AdminClientUpdatedContext;
+import org.keycloak.services.clientpolicy.context.AdminClientViewContext;
 import org.keycloak.services.clientregistration.ClientRegistrationTokenUtils;
 import org.keycloak.services.clientregistration.policy.RegistrationAuth;
 import org.keycloak.services.managers.ClientManager;
@@ -62,6 +64,7 @@ import org.keycloak.services.managers.ResourceAdminManager;
 import org.keycloak.services.resources.admin.permissions.AdminPermissionEvaluator;
 import org.keycloak.services.resources.admin.permissions.AdminPermissionManagement;
 import org.keycloak.services.resources.admin.permissions.AdminPermissions;
+import org.keycloak.utils.ProfileHelper;
 import org.keycloak.utils.ReservedCharValidator;
 import org.keycloak.validation.ValidationUtil;
 
@@ -78,11 +81,10 @@ import javax.ws.rs.QueryParam;
 import javax.ws.rs.core.Context;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Stream;
 
 import static java.lang.Boolean.TRUE;
 
@@ -133,12 +135,8 @@ public class ClientResource {
         auth.clients().requireConfigure(client);
 
         try {
-            session.clientPolicy().triggerOnEvent(new AdminClientUpdateContext(rep, auth.adminAuth(), client));
-        } catch (ClientPolicyException cpe) {
-            throw new ErrorResponseException(cpe.getError(), cpe.getErrorDetail(), Response.Status.BAD_REQUEST);
-        }
+            session.clientPolicy().triggerOnEvent(new AdminClientUpdateContext(rep, client, auth.adminAuth()));
 
-        try {
             updateClientFromRep(rep, client, session);
 
             ValidationUtil.validateClient(session, client, false, r -> {
@@ -149,10 +147,14 @@ public class ClientResource {
                         Response.Status.BAD_REQUEST);
             });
 
+            session.clientPolicy().triggerOnEvent(new AdminClientUpdatedContext(rep, client, auth.adminAuth()));
+
             adminEvent.operation(OperationType.UPDATE).resourcePath(session.getContext().getUri()).representation(rep).success();
             return Response.noContent().build();
         } catch (ModelDuplicateException e) {
             return ErrorResponse.exists("Client already exists");
+        } catch (ClientPolicyException cpe) {
+            throw new ErrorResponseException(cpe.getError(), cpe.getErrorDetail(), Response.Status.BAD_REQUEST);
         }
     }
 
@@ -165,6 +167,12 @@ public class ClientResource {
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
     public ClientRepresentation getClient() {
+        try {
+            session.clientPolicy().triggerOnEvent(new AdminClientViewContext(client, auth.adminAuth()));
+        } catch (ClientPolicyException cpe) {
+            throw new ErrorResponseException(cpe.getError(), cpe.getErrorDetail(), Response.Status.BAD_REQUEST);
+        }
+
         auth.clients().requireView(client);
 
         ClientRepresentation representation = ModelToRepresentation.toRepresentation(client, session);
@@ -207,6 +215,12 @@ public class ClientResource {
 
         if (client == null) {
             throw new NotFoundException("Could not find client");
+        }
+
+        try {
+            session.clientPolicy().triggerOnEvent(new AdminClientUnregisterContext(client, auth.adminAuth()));
+        } catch (ClientPolicyException cpe) {
+            throw new ErrorResponseException(cpe.getError(), cpe.getErrorDetail(), Response.Status.BAD_REQUEST);
         }
 
         new ClientManager(new RealmManager(session)).removeClient(realm, client);
@@ -299,21 +313,14 @@ public class ClientResource {
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
     @Path("default-client-scopes")
-    public List<ClientScopeRepresentation> getDefaultClientScopes() {
+    public Stream<ClientScopeRepresentation> getDefaultClientScopes() {
         return getDefaultClientScopes(true);
     }
 
-    private List<ClientScopeRepresentation> getDefaultClientScopes(boolean defaultScope) {
+    private Stream<ClientScopeRepresentation> getDefaultClientScopes(boolean defaultScope) {
         auth.clients().requireView(client);
 
-        List<ClientScopeRepresentation> defaults = new LinkedList<>();
-        for (ClientScopeModel clientScope : client.getClientScopes(defaultScope, true).values()) {
-            ClientScopeRepresentation rep = new ClientScopeRepresentation();
-            rep.setId(clientScope.getId());
-            rep.setName(clientScope.getName());
-            defaults.add(rep);
-        }
-        return defaults;
+        return client.getClientScopes(defaultScope).values().stream().map(ClientResource::toRepresentation);
     }
 
 
@@ -333,7 +340,7 @@ public class ClientResource {
         }
         client.addClientScope(clientScope, defaultScope);
 
-        adminEvent.operation(OperationType.CREATE).resource(ResourceType.CLIENT).resourcePath(session.getContext().getUri()).success();
+        adminEvent.operation(OperationType.CREATE).resource(ResourceType.CLIENT_SCOPE_CLIENT_MAPPING).resourcePath(session.getContext().getUri()).success();
     }
 
 
@@ -349,7 +356,7 @@ public class ClientResource {
         }
         client.removeClientScope(clientScope);
 
-        adminEvent.operation(OperationType.DELETE).resource(ResourceType.CLIENT).resourcePath(session.getContext().getUri()).success();
+        adminEvent.operation(OperationType.DELETE).resource(ResourceType.CLIENT_SCOPE_CLIENT_MAPPING).resourcePath(session.getContext().getUri()).success();
     }
 
 
@@ -362,7 +369,7 @@ public class ClientResource {
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
     @Path("optional-client-scopes")
-    public List<ClientScopeRepresentation> getOptionalClientScopes() {
+    public Stream<ClientScopeRepresentation> getOptionalClientScopes() {
         return getDefaultClientScopes(false);
     }
 
@@ -462,17 +469,13 @@ public class ClientResource {
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<UserSessionRepresentation> getUserSessions(@QueryParam("first") Integer firstResult, @QueryParam("max") Integer maxResults) {
+    public Stream<UserSessionRepresentation> getUserSessions(@QueryParam("first") Integer firstResult, @QueryParam("max") Integer maxResults) {
         auth.clients().requireView(client);
 
         firstResult = firstResult != null ? firstResult : -1;
         maxResults = maxResults != null ? maxResults : Constants.DEFAULT_MAX_RESULTS;
-        List<UserSessionRepresentation> sessions = new ArrayList<UserSessionRepresentation>();
-        for (UserSessionModel userSession : session.sessions().getUserSessions(client.getRealm(), client, firstResult, maxResults)) {
-            UserSessionRepresentation rep = ModelToRepresentation.toRepresentation(userSession);
-            sessions.add(rep);
-        }
-        return sessions;
+        return session.sessions().getUserSessionsStream(client.getRealm(), client, firstResult, maxResults)
+                .map(ModelToRepresentation::toRepresentation);
     }
 
     /**
@@ -511,30 +514,14 @@ public class ClientResource {
     @GET
     @NoCache
     @Produces(MediaType.APPLICATION_JSON)
-    public List<UserSessionRepresentation> getOfflineUserSessions(@QueryParam("first") Integer firstResult, @QueryParam("max") Integer maxResults) {
+    public Stream<UserSessionRepresentation> getOfflineUserSessions(@QueryParam("first") Integer firstResult, @QueryParam("max") Integer maxResults) {
         auth.clients().requireView(client);
 
         firstResult = firstResult != null ? firstResult : -1;
         maxResults = maxResults != null ? maxResults : Constants.DEFAULT_MAX_RESULTS;
-        List<UserSessionRepresentation> sessions = new ArrayList<UserSessionRepresentation>();
-        List<UserSessionModel> userSessions = session.sessions().getOfflineUserSessions(client.getRealm(), client, firstResult, maxResults);
-        for (UserSessionModel userSession : userSessions) {
-            UserSessionRepresentation rep = ModelToRepresentation.toRepresentation(userSession);
 
-            // Update lastSessionRefresh with the timestamp from clientSession
-            for (Map.Entry<String, AuthenticatedClientSessionModel> csEntry : userSession.getAuthenticatedClientSessions().entrySet()) {
-                String clientUuid = csEntry.getKey();
-                AuthenticatedClientSessionModel clientSession = csEntry.getValue();
-
-                if (client.getId().equals(clientUuid)) {
-                    rep.setLastAccess(Time.toMillis(clientSession.getTimestamp()));
-                    break;
-                }
-            }
-
-            sessions.add(rep);
-        }
-        return sessions;
+        return session.sessions().getOfflineUserSessionsStream(client.getRealm(), client, firstResult, maxResults)
+                .map(this::toUserSessionRepresentation);
     }
 
     /**
@@ -555,9 +542,9 @@ public class ClientResource {
         if (node == null) {
             throw new BadRequestException("Node not found in params");
         }
-        
+
         ReservedCharValidator.validate(node);
-        
+
         if (logger.isDebugEnabled()) logger.debug("Register node: " + node);
         client.registerNode(node, Time.currentTime());
         adminEvent.operation(OperationType.CREATE).resource(ResourceType.CLUSTER_NODE).resourcePath(session.getContext().getUri(), node).success();
@@ -606,6 +593,8 @@ public class ClientResource {
 
     @Path("/authz")
     public AuthorizationService authorization() {
+        ProfileHelper.requireFeature(Profile.Feature.AUTHORIZATION);
+
         AuthorizationService resource = new AuthorizationService(this.session, this.client, this.auth, adminEvent);
 
         ResteasyProviderFactory.getInstance().injectProperties(resource);
@@ -678,7 +667,7 @@ public class ClientResource {
         }
 
         if (rep.getClientId() != null && !rep.getClientId().equals(client.getClientId())) {
-            new ClientManager(new RealmManager(session)).clientIdChanged(client, rep.getClientId());
+            new ClientManager(new RealmManager(session)).clientIdChanged(client, rep);
         }
 
         if (rep.isFullScopeAllowed() != null && rep.isFullScopeAllowed() != client.isFullScopeAllowed()) {
@@ -695,10 +684,38 @@ public class ClientResource {
     }
 
     private void updateAuthorizationSettings(ClientRepresentation rep) {
-        if (TRUE.equals(rep.getAuthorizationServicesEnabled())) {
-            authorization().enable(false);
-        } else {
-            authorization().disable();
+        if (Profile.isFeatureEnabled(Profile.Feature.AUTHORIZATION)) {
+            if (TRUE.equals(rep.getAuthorizationServicesEnabled())) {
+                authorization().enable(false);
+            } else {
+                authorization().disable();
+            }
         }
+    }
+
+    /**
+     * Converts the specified {@link UserSessionModel} into a {@link UserSessionRepresentation}.
+     *
+     * @param userSession the model to be converted.
+     * @return a reference to the constructed representation.
+     */
+    private UserSessionRepresentation toUserSessionRepresentation(final UserSessionModel userSession) {
+        UserSessionRepresentation rep = ModelToRepresentation.toRepresentation(userSession);
+
+        // Update lastSessionRefresh with the timestamp from clientSession
+        Map.Entry<String, AuthenticatedClientSessionModel> result = userSession.getAuthenticatedClientSessions().entrySet().stream()
+                .filter(entry -> Objects.equals(client.getId(), entry.getKey()))
+                .findFirst().orElse(null);
+        if (result != null) {
+            rep.setLastAccess(Time.toMillis(result.getValue().getTimestamp()));
+        }
+        return rep;
+    }
+
+    private static ClientScopeRepresentation toRepresentation(ClientScopeModel clientScopeModel) {
+        ClientScopeRepresentation rep = new ClientScopeRepresentation();
+        rep.setId(clientScopeModel.getId());
+        rep.setName(clientScopeModel.getName());
+        return rep;
     }
 }
